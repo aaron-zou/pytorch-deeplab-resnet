@@ -1,13 +1,14 @@
-+data/*.pth
-+data/gt/
-+data/img/
-+data/snapshots/
-+data/*.caffemodel
+data/*.pth
+data/gt
+data/img
+data/snapshots
+data/*.caffemodel
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.py.*.py
 
 # C extensions
 *.so

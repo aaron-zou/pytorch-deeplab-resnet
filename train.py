@@ -1,43 +1,40 @@
+#!/usr/bin/env python2
 from __future__ import print_function
 
 import os
 import random
 
+import cv2
 import numpy as np
 import torch
-import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.optim as optim
+from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
-import cv2
 import deeplab_resnet
-from docopt import docopt
 
-docstr = """Train ResNet-DeepLab on VOC12 (scenes) in pytorch using MSCOCO pretrained initialization 
+DOCSTR = """Train ResNet-DeepLab on VOC12 (scenes) in pytorch using MS-COCO
+pretrained initialization.
 
-Usage: 
+Usage:
     train.py [options]
 
 Options:
     -h, --help                  Print this message
     --GTpath=<str>              Ground truth path prefix [default: data/gt/]
     --IMpath=<str>              Sketch images path prefix [default: data/img/]
-    --NoLabels=<int>            The number of different labels in training data, VOC has 21 labels, including background [default: 21]
-    --LISTpath=<str>            Input image number list file [default: data/list/train_aug.txt]
+    --NoLabels=<int>            The number of different labels in training data,
+                                VOC has 21 labels, including background [default: 21]
+    --LISTpath=<str>            Input image number list file
+                                [default: data/list/train_aug.txt]
     --lr=<float>                Learning Rate [default: 0.00025]
     -i, --iterSize=<int>        Num iters to accumulate gradients over [default: 10]
-    --wtDecay=<float>          Weight decay during training [default: 0.0005]
+    --wtDecay=<float>           Weight decay during training [default: 0.0005]
     --gpu0=<int>                GPU number [default: 0]
     --maxIter=<int>             Maximum number of iterations [default: 20000]
 """
-
-args = docopt(docstr, version='v0.1')
-print(args)
-
-cudnn.enabled = False
-gpu0 = int(args['--gpu0'])
 
 
 def outS(i):
@@ -45,7 +42,7 @@ def outS(i):
     returns j such that the shape of output blob of is j,j,21 (21 in case of VOC)"""
     j = int(i)
     j = (j+1) // 2
-    j = int(np.ceil((j+1)/2.0))
+    j = int(np.ceil((j+1) / 2.0))
     j = (j+1) // 2
     return j
 
@@ -88,10 +85,7 @@ def scale_gt(img_temp, scale):
     return cv2.resize(img_temp, new_dims, interpolation=cv2.INTER_NEAREST).astype(float)
 
 
-def get_data_from_chunk_v2(chunk):
-    gt_path = args['--GTpath']
-    img_path = args['--IMpath']
-
+def get_data_from_chunk_v2(chunk, gt_path, im_path):
     # random.uniform(0.5,1.5) does not fit in a Titan X with the present
     # version of pytorch, so we random scaling in the range (0.5,1.3),
     # different than caffe implementation in that caffe used only 4 fixed
@@ -144,14 +138,14 @@ def loss_calc(out, label, gpu0):
 
 
 def lr_poly(base_lr, iter, max_iter, power):
-    return base_lr*((1-float(iter)/max_iter)**(power))
+    return base_lr*((1 - float(iter) / max_iter)**(power))
 
 
 def get_1x_lr_params_NOscale(model):
     """
-    This generator returns all the parameters of the net except for 
-    the last classification layer. Note that for each batchnorm layer, 
-    requires_grad is set to False in deeplab_resnet.py, therefore this function does not return 
+    This generator returns all the parameters of the net except for
+    the last classification layer. Note that for each batchnorm layer,
+    requires_grad is set to False in deeplab_resnet.py, therefore this function does not return
     any batchnorm parameter
     """
     b = []
@@ -186,83 +180,99 @@ def get_10x_lr_params(model):
             yield i
 
 
-if not os.path.exists('data/snapshots'):
-    os.makedirs('data/snapshots')
+def get_model(num_labels, pretraining_init_path, gpu0):
+    model = deeplab_resnet.Res_Deeplab(num_labels)
+
+    saved_state_dict = torch.load(pretraining_init_path)
+    if num_labels != 21:
+        for i in saved_state_dict:
+            # Scale.layer5.conv2d_list.3.weight
+            i_parts = i.split('.')
+            if i_parts[1] == 'layer5':
+                saved_state_dict[i] = model.state_dict()[i]
+
+    model.load_state_dict(saved_state_dict)
+    model.float()
+    model.eval()  # use_global_stats = True
+
+    return model.cuda(gpu0)
 
 
-model = deeplab_resnet.Res_Deeplab(int(args['--NoLabels']))
+def main():
+    args = docopt(DOCSTR, version='v0.1')
+    print(args)
 
-saved_state_dict = torch.load(
-    'data/MS_DeepLab_resnet_pretrained_COCO_init.pth')
-if int(args['--NoLabels']) != 21:
-    for i in saved_state_dict:
-        # Scale.layer5.conv2d_list.3.weight
-        i_parts = i.split('.')
-        if i_parts[1] == 'layer5':
-            saved_state_dict[i] = model.state_dict()[i]
+    gt_path = args['--GTpath']
+    img_path = args['--IMpath']
+    gpu0 = int(args['--gpu0'])
 
-model.load_state_dict(saved_state_dict)
+    if not os.path.exists('data/snapshots'):
+        os.makedirs('data/snapshots')
 
-max_iter = int(args['--maxIter'])
-batch_size = 1
-weight_decay = float(args['--wtDecay'])
-base_lr = float(args['--lr'])
+    model = get_model(int(args['--NoLabels']),
+                      'data/MS_DeepLab_resnet_pretrained_COCO_init.pth', gpu0)
 
-model.float()
-model.eval()  # use_global_stats = True
+    # Read training parameters
+    max_iter = int(args['--maxIter'])
+    batch_size = 1
+    weight_decay = float(args['--wtDecay'])
+    base_lr = float(args['--lr'])
 
-img_list = read_file(args['--LISTpath'])
+    # Construct file path lists
+    img_list = read_file(args['--LISTpath'])
+    data_list = []
+    # make list for 10 epochs, though we will only use the first
+    # max_iter*batch_size entries of this list
+    for i in range(10):
+        np.random.shuffle(img_list)
+        data_list.extend(img_list)
 
-data_list = []
-# make list for 10 epocs, though we will only use the first max_iter*batch_size
-# entries of this list
-for i in range(10):
-    np.random.shuffle(img_list)
-    data_list.extend(img_list)
+    # criterion = nn.CrossEntropyLoss()  # use a Classification Cross-Entropy loss
+    optimizer = optim.SGD([
+        {'params': get_1x_lr_params_NOscale(model), 'lr': base_lr},
+        {'params': get_10x_lr_params(model), 'lr': 10*base_lr}],
+        lr=base_lr,
+        momentum=0.9,
+        weight_decay=weight_decay)
 
-model.cuda(gpu0)
-criterion = nn.CrossEntropyLoss()  # use a Classification Cross-Entropy loss
-optimizer = optim.SGD([
-    {'params': get_1x_lr_params_NOscale(model), 'lr': base_lr},
-    {'params': get_10x_lr_params(model), 'lr': 10*base_lr}],
-    lr=base_lr,
-    momentum=0.9,
-    weight_decay=weight_decay)
+    optimizer.zero_grad()
+    data_gen = chunker(data_list, batch_size)
 
-optimizer.zero_grad()
-data_gen = chunker(data_list, batch_size)
+    for iteration in range(max_iter+1):
+        chunk = data_gen.next()
 
-for iter in range(max_iter+1):
-    chunk = data_gen.next()
+        images, label = get_data_from_chunk_v2(chunk, gt_path, img_path)
+        images = Variable(images).cuda(gpu0)
 
-    images, label = get_data_from_chunk_v2(chunk)
-    images = Variable(images).cuda(gpu0)
+        out = model(images)
+        loss = loss_calc(out[0], label[0], gpu0)
+        iter_size = int(args['--iterSize'])
+        for i in range(len(out)-1):
+            loss = loss + loss_calc(out[i+1], label[i+1], gpu0)
+        loss = loss / iter_size
+        loss.backward()
 
-    out = model(images)
-    loss = loss_calc(out[0], label[0], gpu0)
-    iter_size = int(args['--iterSize'])
-    for i in range(len(out)-1):
-        loss = loss + loss_calc(out[i+1], label[i+1], gpu0)
-    loss = loss / iter_size
-    loss.backward()
+        if iteration % 1 == 0:
+            print('iter = {} of {} completed, loss = {}'.format(
+                iteration, max_iter, iter_size * (loss.data.cpu().numpy())))
 
-    if iter % 1 == 0:
-        print('iter = {} of {} completed, loss = '.format(
-            iter, max_iter, iter_size*(loss.data.cpu().numpy())))
+        if iteration % iter_size == 0:
+            optimizer.step()
+            lr_ = lr_poly(base_lr, iteration, max_iter, 0.9)
+            print('(poly lr policy) learning rate: {}'.format(lr_))
+            optimizer = optim.SGD([
+                {'params': get_1x_lr_params_NOscale(model), 'lr': lr_},
+                {'params': get_10x_lr_params(model), 'lr': 10*lr_}],
+                lr=lr_,
+                momentum=0.9,
+                weight_decay=weight_decay)
+            optimizer.zero_grad()
 
-    if iter % iter_size == 0:
-        optimizer.step()
-        lr_ = lr_poly(base_lr, iter, max_iter, 0.9)
-        print('(poly lr policy) learning rate: {}'.format(lr_))
-        optimizer = optim.SGD([
-            {'params': get_1x_lr_params_NOscale(model), 'lr': lr_},
-            {'params': get_10x_lr_params(model), 'lr': 10*lr_}],
-            lr=lr_,
-            momentum=0.9,
-            weight_decay=weight_decay)
-        optimizer.zero_grad()
+        if iteration % 1000 == 0 and iteration != 0:
+            print('Taking snapshot {}'.format(iteration))
+            torch.save(model.state_dict(),
+                       'data/snapshots/VOC12_scenes_'+str(iteration)+'.pth')
 
-    if iter % 1000 == 0 and iter != 0:
-        print('taking snapshot ...')
-        torch.save(model.state_dict(),
-                   'data/snapshots/VOC12_scenes_'+str(iter)+'.pth')
+
+if __name__ == "__main__":
+    main()

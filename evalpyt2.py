@@ -2,19 +2,13 @@
 from __future__ import print_function
 
 import os
-import sys
-from collections import OrderedDict
-from os import walk
-
 import cv2
 import numpy as np
-import scipy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as models
 from docopt import docopt
-from scipy import ndimage
+from PIL import Image
 from torch.autograd import Variable
 
 import deeplab_resnet
@@ -86,20 +80,23 @@ def main():
     # TODO set the (different iteration) models that you want to evaluate on.
     # Models are saved during training after each 1000 iters by default.
     for snapshot in os.listdir(snapFolder):
+        path = os.path.join(snapFolder, snapshot)
         print('Processing snapshot: {}'.format(snapshot))
-        if not os.path.isfile(snapshot):
+        if not os.path.isfile(path):
             continue
 
-        saved_state_dict = torch.load(snapshot)
+        saved_state_dict = torch.load(path)
         model.load_state_dict(saved_state_dict)
 
         hist = np.zeros((max_label+1, max_label+1))
         pytorch_list = []
 
-        for i in img_list:
+        print('Processing {} images'.format(len(img_list)))
+        for i, filename in enumerate(img_list):
+            print('({}/{})'.format(i, len(img_list)))
             img = np.zeros((513, 513, 3))
             img_temp = cv2.imread(os.path.join(
-                im_path, i[:-1] + '.jpg')).astype(float)
+                im_path, filename[:-1] + '.jpg')).astype(float)
             img_original = img_temp
 
             img_temp[:, :, 0] = img_temp[:, :, 0] - 104.008
@@ -107,11 +104,15 @@ def main():
             img_temp[:, :, 2] = img_temp[:, :, 2] - 122.675
             img[:img_temp.shape[0], :img_temp.shape[1], :] = img_temp
 
-            gt = cv2.imread(os.path.join(gt_path, i[:-1] + '.png'), 0)
-            #gt[gt==255] = 0
+            # gt = cv2.imread(os.path.join(gt_path, i[:-1] + '.png'), 0)
+            # gt[gt==255] = 0
+            gt = np.array(Image.open(os.path.join(
+                gt_path, filename[:-1] + '.png')))
 
-            output = model(Variable(torch.from_numpy(img[np.newaxis, :].transpose(
-                0, 3, 1, 2)).float(), volatile=True).cuda(gpu0))
+            input_image = torch.from_numpy(
+                img[np.newaxis, :].transpose(0, 3, 1, 2)).float()
+
+            output = model(Variable(input_image).cuda(gpu0))
             interp = nn.UpsamplingBilinear2d(size=(513, 513))
             output = interp(output[3]).cpu().data[0].numpy()
             output = output[:, :img_temp.shape[0], :img_temp.shape[1]]

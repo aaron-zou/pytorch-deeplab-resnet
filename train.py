@@ -13,7 +13,7 @@ from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
-import deeplab_resnet
+import resnet
 
 DOCSTR = """Train ResNet-DeepLab on VOC12 (scenes) in pytorch using MS-COCO
 pretrained initialization.
@@ -25,6 +25,8 @@ Options:
     -h, --help                  Print this message
     --GTpath=<str>              Ground truth path prefix [default: data/gt/]
     --IMpath=<str>              Sketch images path prefix [default: data/img/]
+    --GText=<str>               Ground truth path extension [default: .png]
+    --IMext=<str>               Sketch images path extension [default: .jpg]
     --NoLabels=<int>            The number of different labels in training data,
                                 VOC has 21 labels, including background [default: 21]
     --LISTpath=<str>            Input image number list file
@@ -34,6 +36,7 @@ Options:
     --wtDecay=<float>           Weight decay during training [default: 0.0005]
     --gpu0=<int>                GPU number [default: 0]
     --maxIter=<int>             Maximum number of iterations [default: 20000]
+    --outputFn=<str>            Prefix for snapshot output file [default: VOC21_scenes]
 """
 
 
@@ -85,19 +88,19 @@ def scale_gt(img_temp, scale):
     return cv2.resize(img_temp, new_dims, interpolation=cv2.INTER_NEAREST).astype(float)
 
 
-def get_data_from_chunk_v2(chunk, gt_path, im_path):
+def get_data_from_chunk_v2(chunk, gt_path, img_path, gt_ext, img_ext):
     # random.uniform(0.5,1.5) does not fit in a Titan X with the present
     # version of pytorch, so we random scaling in the range (0.5,1.3),
     # different than caffe implementation in that caffe used only 4 fixed
     # scales. Refer to README
-    scale = random.uniform(0.5, 1.3)
-    dim = int(scale*321)
+    scale = random.uniform(0.5, 1.1)
+    dim = int(scale * 321)
     images = np.zeros((dim, dim, 3, len(chunk)))
     gt = np.zeros((dim, dim, 1, len(chunk)))
     for i, piece in enumerate(chunk):
         flip_p = random.uniform(0, 1)
         img_temp = cv2.imread(os.path.join(
-            img_path, piece+'.jpg')).astype(float)
+            img_path, piece + img_ext)).astype(float)
         img_temp = cv2.resize(img_temp, (321, 321)).astype(float)
         img_temp = scale_im(img_temp, scale)
         img_temp[:, :, 0] = img_temp[:, :, 0] - 104.008
@@ -106,8 +109,7 @@ def get_data_from_chunk_v2(chunk, gt_path, im_path):
         img_temp = flip(img_temp, flip_p)
         images[:, :, :, i] = img_temp
 
-        gt_temp = Image.open(os.path.join(gt_path, piece + '.png'))
-        gt_temp = cv2.imread(os.path.join(gt_path, piece+'.png'))[:, :, 0]
+        gt_temp = cv2.imread(os.path.join(gt_path, piece + gt_ext))[:, :, 0]
         gt_temp[gt_temp == 255] = 0
         gt_temp = cv2.resize(gt_temp, (321, 321),
                              interpolation=cv2.INTER_NEAREST)
@@ -132,7 +134,7 @@ def loss_calc(out, label, gpu0):
     label = torch.from_numpy(label).long()
     label = Variable(label).cuda(gpu0)
     m = nn.LogSoftmax()
-    criterion = nn.NLLLoss2d()
+    criterion = nn.NLLLoss()
     out = m(out)
     return criterion(out, label)
 
@@ -181,20 +183,10 @@ def get_10x_lr_params(model):
 
 
 def get_model(num_labels, pretraining_init_path, gpu0):
-    model = deeplab_resnet.Res_Deeplab(num_labels)
-
-    saved_state_dict = torch.load(pretraining_init_path)
-    if num_labels != 21:
-        for i in saved_state_dict:
-            # Scale.layer5.conv2d_list.3.weight
-            i_parts = i.split('.')
-            if i_parts[1] == 'layer5':
-                saved_state_dict[i] = model.state_dict()[i]
-
-    model.load_state_dict(saved_state_dict)
+    # model = resnet.getDeepLabV2(num_labels, pretraining_init_path)
+    model = resnet.getDeepLabV2FromResNet(num_labels)
     model.float()
     model.eval()  # use_global_stats = True
-
     return model.cuda(gpu0)
 
 
@@ -204,7 +196,10 @@ def main():
 
     gt_path = args['--GTpath']
     img_path = args['--IMpath']
+    gt_ext = args['--GText']
+    img_ext = args['--IMext']
     gpu0 = int(args['--gpu0'])
+    outputFn = args['--outputFn']
 
     if not os.path.exists('data/snapshots'):
         os.makedirs('data/snapshots')
@@ -221,9 +216,7 @@ def main():
     # Construct file path lists
     img_list = read_file(args['--LISTpath'])
     data_list = []
-    # make list for 10 epochs, though we will only use the first
-    # max_iter*batch_size entries of this list
-    for i in range(10):
+    while len(data_list) < max_iter:
         np.random.shuffle(img_list)
         data_list.extend(img_list)
 
@@ -241,7 +234,8 @@ def main():
     for iteration in range(max_iter+1):
         chunk = data_gen.next()
 
-        images, label = get_data_from_chunk_v2(chunk, gt_path, img_path)
+        images, label = get_data_from_chunk_v2(
+            chunk, gt_path, img_path, gt_ext, img_ext)
         images = Variable(images).cuda(gpu0)
 
         out = model(images)
@@ -268,10 +262,10 @@ def main():
                 weight_decay=weight_decay)
             optimizer.zero_grad()
 
-        if iteration % 1000 == 0 and iteration != 0:
+        if iteration % 5000 == 0 and iteration != 0:
             print('Taking snapshot {}'.format(iteration))
-            torch.save(model.state_dict(),
-                       'data/snapshots/VOC12_scenes_'+str(iteration)+'.pth')
+            torch.save(model.state_dict(), os.path.join(
+                'data/snapshots', '{}_{}.pth'.format(outputFn, iteration)))
 
 
 if __name__ == "__main__":

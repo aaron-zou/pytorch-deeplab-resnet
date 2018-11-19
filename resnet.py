@@ -7,9 +7,7 @@ import torch.nn as nn
 from deeplab_resnet import Classifier_Module, Res_Deeplab
 from torchvision import models
 
-PRETRAINED_DEEPLAB_PATH = ('/vision/vision_users/azou/motion_features'
-                           '/pytorch_deeplab_resnet/data'
-                           '/MS_DeepLab_resnet_pretrained_COCO_init.pth')
+PRETRAINED_DEEPLAB_PATH = ('./data/MS_DeepLab_resnet_pretrained_COCO_init.pth')
 
 
 def getResNet101(pretrained, num_categories=101):

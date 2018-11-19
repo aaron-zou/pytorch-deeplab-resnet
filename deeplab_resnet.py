@@ -57,6 +57,7 @@ class Bottleneck(nn.Module):
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1,  dilation_=1, downsample=None):
+        super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(
             inplanes, planes, kernel_size=1, stride=stride, bias=False)
         self.bn1 = nn.BatchNorm2d(planes, affine=affine_par)
@@ -124,8 +125,8 @@ class Classifier_Module(nn.Module):
 
 class ResNet(nn.Module):
     def __init__(self, block, layers, NoLabels):
-        self.inplanes = 64
         super(ResNet, self).__init__()
+        self.inplanes = 64
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64, affine=affine_par)

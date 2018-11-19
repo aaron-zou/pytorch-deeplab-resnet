@@ -1,8 +1,10 @@
+# Project-specific
 data/*.pth
 data/gt
 data/img
 data/snapshots
 data/*.caffemodel
+jobs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

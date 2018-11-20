@@ -99,6 +99,7 @@ def get_data_from_chunk_v2(chunk, gt_path, img_path, gt_ext, img_ext):
     gt = np.zeros((dim, dim, 1, len(chunk)))
     for i, piece in enumerate(chunk):
         flip_p = random.uniform(0, 1)
+        print(os.path.join(img_path, piece + img_ext))
         img_temp = cv2.imread(os.path.join(
             img_path, piece + img_ext)).astype(float)
         img_temp = cv2.resize(img_temp, (321, 321)).astype(float)
@@ -182,11 +183,10 @@ def get_10x_lr_params(model):
             yield i
 
 
-def get_model(num_labels, pretraining_init_path, gpu0):
-    # model = resnet.getDeepLabV2(num_labels, pretraining_init_path)
+def get_model(num_labels, gpu0):
     model = resnet.getDeepLabV2FromResNet(num_labels)
     model.float()
-    model.eval()  # use_global_stats = True
+    model.eval()
     return model.cuda(gpu0)
 
 
@@ -204,8 +204,7 @@ def main():
     if not os.path.exists('data/snapshots'):
         os.makedirs('data/snapshots')
 
-    model = get_model(int(args['--NoLabels']),
-                      'data/MS_DeepLab_resnet_pretrained_COCO_init.pth', gpu0)
+    model = get_model(int(args['--NoLabels']), gpu0)
 
     # Read training parameters
     max_iter = int(args['--maxIter'])
@@ -220,7 +219,6 @@ def main():
         np.random.shuffle(img_list)
         data_list.extend(img_list)
 
-    # criterion = nn.CrossEntropyLoss()  # use a Classification Cross-Entropy loss
     optimizer = optim.SGD([
         {'params': get_1x_lr_params_NOscale(model), 'lr': base_lr},
         {'params': get_10x_lr_params(model), 'lr': 10*base_lr}],

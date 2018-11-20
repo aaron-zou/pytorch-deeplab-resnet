@@ -24,8 +24,14 @@ Options:
     -h, --help                  Print this message
     --visualize                 View outputs of each sketch
     --snapFolder=<str>          Snapshot folder [default: data/snapshots]
+    --snapPath=<str>            If set, run on a specific snapshot in the folder.
+                                [default: VOC21_scenes_20000.pth]
+    --valPath=<str>             Path to file list of validation images.
+                                [default: data/list/val.txt]
     --testGTpath=<str>          Ground truth path prefix [default: data/gt/]
     --testIMpath=<str>          Sketch images path prefix [default: data/img/]
+    --GText=<str>               Ground truth path extension [default: .png]
+    --IMext=<str>               Sketch image path extension [default: .jpg]
     --NoLabels=<int>            The number of different labels in training data,
                                 VOC has 21 labels, including background [default: 21]
     --gpu0=<int>                GPU number [default: 0]
@@ -69,17 +75,22 @@ def main():
     gpu0 = int(args['--gpu0'])
     im_path = args['--testIMpath']
     gt_path = args['--testGTpath']
+    im_ext = args['--IMext']
+    gt_ext = args['--GText']
     max_label = int(args['--NoLabels'])-1  # labels from 0,1, ... 20 (for VOC)
 
     model = deeplab_resnet.Res_Deeplab(int(args['--NoLabels']))
     model.eval()
     model.cuda(gpu0)
     snapFolder = args['--snapFolder']
-    img_list = open('data/list/val.txt').readlines()
+    snapPath = args['--snapPath']
+    with open(args['--valPath'], 'r') as f:
+        img_list = f.readlines()
 
-    # TODO set the (different iteration) models that you want to evaluate on.
-    # Models are saved during training after each 1000 iters by default.
     for snapshot in os.listdir(snapFolder):
+        if snapPath and snapshot != snapPath:
+            continue
+
         path = os.path.join(snapFolder, snapshot)
         print('Processing snapshot: {}'.format(snapshot))
         if not os.path.isfile(path):
@@ -96,7 +107,7 @@ def main():
             print('({}/{})'.format(i, len(img_list)))
             img = np.zeros((513, 513, 3))
             img_temp = cv2.imread(os.path.join(
-                im_path, filename[:-1] + '.jpg')).astype(float)
+                im_path, filename[:-1] + im_ext)).astype(float)
             img_original = img_temp
 
             img_temp[:, :, 0] = img_temp[:, :, 0] - 104.008
@@ -107,7 +118,7 @@ def main():
             # gt = cv2.imread(os.path.join(gt_path, i[:-1] + '.png'), 0)
             # gt[gt==255] = 0
             gt = np.array(Image.open(os.path.join(
-                gt_path, filename[:-1] + '.png')))
+                gt_path, filename[:-1] + gt_ext)))
 
             input_image = torch.from_numpy(
                 img[np.newaxis, :].transpose(0, 3, 1, 2)).float()

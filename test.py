@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 from __future__ import print_function
 
 import os
@@ -33,7 +33,8 @@ Options:
     --GText=<str>               Ground truth path extension [default: .png]
     --IMext=<str>               Sketch image path extension [default: .jpg]
     --NoLabels=<int>            The number of different labels in training data,
-                                VOC has 21 labels, including background [default: 21]
+                                VOC has 21 labels, including background
+                                [default: 21]
     --gpu0=<int>                GPU number [default: 0]
 """
 
@@ -73,6 +74,8 @@ def main():
     print(args)
 
     gpu0 = int(args['--gpu0'])
+    snapFolder = args['--snapFolder']
+    snapPath = args['--snapPath']
     im_path = args['--testIMpath']
     gt_path = args['--testGTpath']
     im_ext = args['--IMext']
@@ -80,10 +83,8 @@ def main():
     max_label = int(args['--NoLabels'])-1  # labels from 0,1, ... 20 (for VOC)
 
     model = deeplab_resnet.Res_Deeplab(int(args['--NoLabels']))
-    model.eval()
-    model.cuda(gpu0)
-    snapFolder = args['--snapFolder']
-    snapPath = args['--snapPath']
+    model = model.eval().cuda(gpu0)
+
     with open(args['--valPath'], 'r') as f:
         img_list = f.readlines()
 
@@ -145,7 +146,7 @@ def main():
 
         miou = np.diag(hist) / (hist.sum(1) + hist.sum(0) - np.diag(hist))
         print('pytorch {}, mean iou = {}'.format(
-            iter,  np.sum(miou)/len(miou)))
+            snapshot,  np.sum(miou) / len(miou)))
 
 
 if __name__ == "__main__":

@@ -56,7 +56,13 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, inplanes, planes, stride=1,  dilation_=1, downsample=None):
+    def __init__(
+            self,
+            inplanes,
+            planes,
+            stride=1,
+            dilation_=1,
+            downsample=None):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(
             inplanes, planes, kernel_size=1, stride=stride, bias=False)
@@ -111,7 +117,8 @@ class Classifier_Module(nn.Module):
         self.conv2d_list = nn.ModuleList()
         for dilation, padding in zip(dilation_series, padding_series):
             self.conv2d_list.append(nn.Conv2d(
-                2048, NoLabels, kernel_size=3, stride=1, padding=padding, dilation=dilation, bias=True))
+                2048, NoLabels, kernel_size=3, stride=1, padding=padding,
+                dilation=dilation, bias=True))
 
         for m in self.conv2d_list:
             m.weight.data.normal_(0, 0.01)
@@ -173,7 +180,8 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def _make_pred_layer(self, block, dilation_series, padding_series, NoLabels):
+    def _make_pred_layer(self, block, dilation_series, padding_series,
+                         NoLabels):
         return block(dilation_series, padding_series, NoLabels)
 
     def forward(self, x):

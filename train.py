@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 from __future__ import print_function
 
 import os
@@ -36,7 +36,7 @@ Options:
     --wtDecay=<float>           Weight decay during training [default: 0.0005]
     --gpu0=<int>                GPU number [default: 0]
     --maxIter=<int>             Maximum number of iterations [default: 20000]
-    --outputFn=<str>            Prefix for snapshot output file [default: VOC21_scenes]
+    --outputFn=<str>            Prefix for snapshot output file [default: VOC12_scenes]
 """
 
 
@@ -59,7 +59,7 @@ def read_file(path_to_file):
 
 
 def chunker(seq, size):
-    return (seq[pos:pos+size] for pos in xrange(0, len(seq), size))
+    return (seq[pos:pos+size] for pos in range(0, len(seq), size))
 
 
 def resize_label_batch(label, size):
@@ -184,10 +184,8 @@ def get_10x_lr_params(model):
 
 
 def get_model(num_labels, gpu0):
-    model = resnet.getDeepLabV2FromResNet(num_labels)
-    model.float()
-    model.eval()
-    return model.cuda(gpu0)
+    model = resnet.getDeepLabV2(num_labels)
+    return model.float().eval().cuda(gpu0)
 
 
 def main():
@@ -230,7 +228,7 @@ def main():
     data_gen = chunker(data_list, batch_size)
 
     for iteration in range(max_iter+1):
-        chunk = data_gen.next()
+        chunk = next(data_gen)
 
         images, label = get_data_from_chunk_v2(
             chunk, gt_path, img_path, gt_ext, img_ext)

@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from docopt import docopt
 from PIL import Image
@@ -27,16 +28,20 @@ Options:
     --IMpath=<str>              Sketch images path prefix [default: data/img/]
     --GText=<str>               Ground truth path extension [default: .png]
     --IMext=<str>               Sketch images path extension [default: .jpg]
-    --NoLabels=<int>            The number of different labels in training data,
-                                VOC has 21 labels, including background [default: 21]
+    --NoLabels=<int>            The number of different labels in training data
+                                VOC has 21 labels, including background
+                                [default: 21]
     --LISTpath=<str>            Input image number list file
                                 [default: data/list/train_aug.txt]
     --lr=<float>                Learning Rate [default: 0.00025]
-    -i, --iterSize=<int>        Num iters to accumulate gradients over [default: 10]
+    -i, --iterSize=<int>        Num iters to accumulate gradients over
+                                [default: 10]
     --wtDecay=<float>           Weight decay during training [default: 0.0005]
     --gpu0=<int>                GPU number [default: 0]
     --maxIter=<int>             Maximum number of iterations [default: 20000]
-    --outputFn=<str>            Prefix for snapshot output file [default: VOC12_scenes]
+    --imagenet                  Use ImageNet initialization (otherwise MS-COCO)
+    --outputPrefix=<str>        Prefix for snapshot output file
+                                [default: VOC12_scenes]
 """
 
 
@@ -99,7 +104,6 @@ def get_data_from_chunk_v2(chunk, gt_path, img_path, gt_ext, img_ext):
     gt = np.zeros((dim, dim, 1, len(chunk)))
     for i, piece in enumerate(chunk):
         flip_p = random.uniform(0, 1)
-        print(os.path.join(img_path, piece + img_ext))
         img_temp = cv2.imread(os.path.join(
             img_path, piece + img_ext)).astype(float)
         img_temp = cv2.resize(img_temp, (321, 321)).astype(float)
@@ -183,8 +187,11 @@ def get_10x_lr_params(model):
             yield i
 
 
-def get_model(num_labels, gpu0):
-    model = resnet.getDeepLabV2(num_labels)
+def get_model(num_labels, use_imagenet, gpu0):
+    if use_imagenet:
+        model = resnet.getDeepLabV2FromResNet(num_labels)
+    else:
+        model = resnet.getDeepLabV2(num_labels)
     return model.float().eval().cuda(gpu0)
 
 
@@ -197,12 +204,12 @@ def main():
     gt_ext = args['--GText']
     img_ext = args['--IMext']
     gpu0 = int(args['--gpu0'])
-    outputFn = args['--outputFn']
+    outputPrefix = args['--outputPrefix']
 
     if not os.path.exists('data/snapshots'):
         os.makedirs('data/snapshots')
 
-    model = get_model(int(args['--NoLabels']), gpu0)
+    model = get_model(int(args['--NoLabels']), args['--imagenet'], gpu0)
 
     # Read training parameters
     max_iter = int(args['--maxIter'])
@@ -261,7 +268,7 @@ def main():
         if iteration % 5000 == 0 and iteration != 0:
             print('Taking snapshot {}'.format(iteration))
             torch.save(model.state_dict(), os.path.join(
-                'data/snapshots', '{}_{}.pth'.format(outputFn, iteration)))
+                'data/snapshots', '{}_{}.pth'.format(outputPrefix, iteration)))
 
 
 if __name__ == "__main__":

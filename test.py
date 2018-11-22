@@ -14,6 +14,7 @@ from torch.autograd import Variable
 import deeplab_resnet
 import matplotlib.pyplot as plt
 
+
 DOCSTR = """Evaluate ResNet-DeepLab trained on scenes (VOC2012), a total of 21
 labels including background.
 

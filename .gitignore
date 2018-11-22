@@ -3,11 +3,12 @@ data/*.pth
 data/gt
 data/img
 data/snapshots
-data/*.caffemodel
 experiments
+sync_to_eldar.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+*cache/
 *.py[cod]
 *$py.class
 *.py.*.py

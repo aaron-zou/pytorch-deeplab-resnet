@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
-import os
+from typing import Dict
+
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -11,143 +13,91 @@ from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
-import deeplab_resnet
-import matplotlib.pyplot as plt
-
+from dataloaders import FusionSegDataloader, Mode, VOC12Dataloader
+from deeplab_resnet import MS_Deeplab, Res_Deeplab
 
 DOCSTR = """Evaluate ResNet-DeepLab trained on scenes (VOC2012), a total of 21
 labels including background.
 
 Usage:
-    evalpyt.py [options]
+    evalpyt.py (voc | fusionseg) [options]
 
 Options:
     -h, --help                  Print this message
-    --visualize                 View outputs of each sketch
-    --snapFolder=<str>          Snapshot folder [default: data/snapshots]
-    --snapPath=<str>            If set, run on a specific snapshot in the folder.
-                                [default: VOC21_scenes_20000.pth]
+    voc                         Test a model on VOC dataset.
+    fusionseg                   Test a model on fusionseg dataset.
+    --visualize                 Generate visualizations of model outputs.
+    --snapPath=<str>            Which snapshot to evaluate.
+                                [default: ./data/snapshots/VOC21_scenes_20000.pth]
     --valPath=<str>             Path to file list of validation images.
                                 [default: data/list/val.txt]
-    --testGTpath=<str>          Ground truth path prefix [default: data/gt/]
-    --testIMpath=<str>          Sketch images path prefix [default: data/img/]
-    --GText=<str>               Ground truth path extension [default: .png]
-    --IMext=<str>               Sketch image path extension [default: .jpg]
+    --root=<str>                Root path prefix [default: data/voc2012]
     --NoLabels=<int>            The number of different labels in training data,
                                 VOC has 21 labels, including background
                                 [default: 21]
-    --gpu0=<int>                GPU number [default: 0]
+    --gpu=<int>                GPU number [default: 0]
+
 """
 
 
-def fast_hist(a, b, n):
+def fast_hist(a: np.ndarray, b: np.ndarray, n: int) -> np.ndarray:
     k = (a >= 0) & (a < n)
     return np.bincount(n * a[k].astype(int) + b[k], minlength=n**2).reshape(n, n)
 
 
-def get_iou(pred, gt, max_label):
-    if pred.shape != gt.shape:
-        raise RuntimeError(
-            'pred shape: {}, gt shape: {}'.format(pred.shape, gt.shape))
-    gt = gt.astype(np.float32)
-    pred = pred.astype(np.float32)
-    count = np.zeros((max_label+1,))
+def get_model(num_labels: int, snapshot_path: str, gpu: int) -> MS_Deeplab:
+    """Retrieve model with appropriate parameters"""
+    model = Res_Deeplab(num_labels)
+    saved_state_dict = torch.load(snapshot_path)
+    model.load_state_dict(saved_state_dict)
+    return model.eval().cuda(gpu)
 
-    for j in range(max_label+1):
-        x = np.where(pred == j)
-        p_idx_j = set(zip(x[0].tolist(), x[1].tolist()))
-        x = np.where(gt == j)
-        GT_idx_j = set(zip(x[0].tolist(), x[1].tolist()))
-        n_jj = set.intersection(p_idx_j, GT_idx_j)
-        u_jj = set.union(p_idx_j, GT_idx_j)
 
-        if len(GT_idx_j) != 0:
-            count[j] = float(len(n_jj)) / float(len(u_jj))
-
-    result_class = count
-    Aiou = np.sum(result_class[:]) / float(len(np.unique(gt)))
-
-    return Aiou
+def get_dataloader(args: Dict[str, str]) -> torch.utils.data.Dataloader:
+    """Construct appropriate dataloader"""
+    if args["voc"]:
+        return VOC12Dataloader(args["--root"], args["--valPath"], Mode.VAL)
+    elif args["fusionseg"]:
+        return FusionSegDataloader(args["--root"],
+                                   args["--valPath"],
+                                   binary_class=args["--NoLabels"] == 2,
+                                   mode=Mode.VAL)
+    else:
+        raise NotImplementedError
 
 
 def main():
     args = docopt(DOCSTR, version='v0.1')
     print(args)
 
-    gpu0 = int(args['--gpu0'])
-    snapFolder = args['--snapFolder']
-    snapPath = args['--snapPath']
-    im_path = args['--testIMpath']
-    gt_path = args['--testGTpath']
-    im_ext = args['--IMext']
-    gt_ext = args['--GText']
-    max_label = int(args['--NoLabels'])-1  # labels from 0,1, ... 20 (for VOC)
+    gpu = int(args['--gpu'])
+    max_label = int(args['--NoLabels']) - 1  # labels from 0,1, ... 20 (for VOC)
 
-    model = deeplab_resnet.Res_Deeplab(int(args['--NoLabels']))
-    model = model.eval().cuda(gpu0)
+    model = get_model(int(args['--NoLabels']), args['--snapPath'], gpu)
 
-    with open(args['--valPath'], 'r') as f:
-        img_list = f.readlines()
+    hist = np.zeros((max_label+1, max_label+1))
+    for i, (img, gt) in enumerate(get_dataloader(args)):
+        print('processing {}'.format(i))
 
-    for snapshot in os.listdir(snapFolder):
-        if snapPath and snapshot != snapPath:
-            continue
+        output = model(Variable(img).cuda(gpu))
 
-        path = os.path.join(snapFolder, snapshot)
-        print('Processing snapshot: {}'.format(snapshot))
-        if not os.path.isfile(path):
-            continue
+        output = F.interpolate(output[3], (513, 513)).cpu().data[0].numpy()
+        output = output[:, :gt.shape[0], :gt.shape[1]]
 
-        saved_state_dict = torch.load(path)
-        model.load_state_dict(saved_state_dict)
+        output = output.transpose(1, 2, 0)
+        output = np.argmax(output, axis=2)
 
-        hist = np.zeros((max_label+1, max_label+1))
-        pytorch_list = []
+        if args['--visualize']:
+            plt.subplot(2, 1, 1)
+            plt.imshow(gt)
+            plt.subplot(2, 1, 2)
+            plt.imshow(output)
+            plt.show()
 
-        print('Processing {} images'.format(len(img_list)))
-        for i, filename in enumerate(img_list):
-            print('({}/{})'.format(i, len(img_list)))
-            img = np.zeros((513, 513, 3))
-            img_temp = cv2.imread(os.path.join(
-                im_path, filename[:-1] + im_ext)).astype(float)
-            img_original = img_temp
+        hist += fast_hist(gt.flatten(), output.flatten(), max_label+1)
 
-            img_temp[:, :, 0] = img_temp[:, :, 0] - 104.008
-            img_temp[:, :, 1] = img_temp[:, :, 1] - 116.669
-            img_temp[:, :, 2] = img_temp[:, :, 2] - 122.675
-            img[:img_temp.shape[0], :img_temp.shape[1], :] = img_temp
-
-            # gt = cv2.imread(os.path.join(gt_path, i[:-1] + '.png'), 0)
-            # gt[gt==255] = 0
-            gt = np.array(Image.open(os.path.join(
-                gt_path, filename[:-1] + gt_ext)))
-
-            input_image = torch.from_numpy(
-                img[np.newaxis, :].transpose(0, 3, 1, 2)).float()
-
-            output = model(Variable(input_image).cuda(gpu0))
-            interp = nn.UpsamplingBilinear2d(size=(513, 513))
-            output = interp(output[3]).cpu().data[0].numpy()
-            output = output[:, :img_temp.shape[0], :img_temp.shape[1]]
-            output = output.transpose(1, 2, 0)
-            output = np.argmax(output, axis=2)
-
-            if args['--visualize']:
-                plt.subplot(3, 1, 1)
-                plt.imshow(img_original)
-                plt.subplot(3, 1, 2)
-                plt.imshow(gt)
-                plt.subplot(3, 1, 3)
-                plt.imshow(output)
-                plt.show()
-
-            iou_pytorch = get_iou(output, gt, max_label)
-            pytorch_list.append(iou_pytorch)
-            hist += fast_hist(gt.flatten(), output.flatten(), max_label+1)
-
-        miou = np.diag(hist) / (hist.sum(1) + hist.sum(0) - np.diag(hist))
-        print('pytorch {}, mean iou = {}'.format(
-            snapshot,  np.sum(miou) / len(miou)))
+    miou = np.diag(hist) / (hist.sum(1) + hist.sum(0) - np.diag(hist))
+    print('Mean iou={}'.format(np.sum(miou) / len(miou)))
 
 
 if __name__ == "__main__":

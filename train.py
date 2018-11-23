@@ -14,7 +14,7 @@ from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
-import resnet
+import deeplab.resnet
 
 DOCSTR = """Train ResNet-DeepLab on VOC12 (scenes) in pytorch using MS-COCO
 pretrained initialization.

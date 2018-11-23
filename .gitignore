@@ -5,6 +5,7 @@ data/img
 data/snapshots
 experiments
 sync_to_eldar.sh
+test_sanity_check.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

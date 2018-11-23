@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 from __future__ import print_function
 
 import enum
@@ -11,7 +10,7 @@ import torch.utils.data as data
 import torchvision.transforms.functional as F
 from torchvision import transforms
 
-from datasets import FusionSegDataset, VOC12Dataset
+from deeplab.datasets import FusionSegDataset, VOC12Dataset
 
 
 @enum.unique
@@ -127,18 +126,3 @@ class FusionSegDataloader(data.DataLoader):
                              TRANSFORMS[mode]["gt_transform"],
                              binary_class),
             num_workers=num_workers)
-
-
-if __name__ == "__main__":
-    # Sanity check we can construct instances of both dataloaders
-    voc_root = "/media/storage/data/voc2012"
-    for img, gt in VOC12Dataloader(voc_root, './data/val.txt', Mode.VAL):
-        break
-
-    fusionseg_root = "/media/storage/data/segmentation"
-    list_path = os.path.join(fusionseg_root, "images.txt")
-    for img, gt in FusionSegDataloader(fusionseg_root, list_path,
-                                       binary_class=True, mode=Mode.TRAIN):
-        break
-
-    print('can construct dataloaders successfully')

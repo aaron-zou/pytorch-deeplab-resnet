@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 from __future__ import print_function
 
 import os
@@ -95,26 +94,3 @@ class FusionSegDataset(SegmentationDataset):
             img_dir="optical_flow", gt_dir="ground_truth", img_ext="_flow.png",
             gt_ext=gt_ext
         )
-
-
-if __name__ == "__main__":
-    # Sanity check that the number of items matches as expected and we can open
-    # an image
-    def check_dataset(dataset: SegmentationDataset, num_elems: int) -> None:
-        assert len(dataset) == num_elems, "Mismatch in number of elements"
-        for img, gt in dataset:
-            assert img is not None and gt is not None, "Error during reading"
-            break
-
-    voc_root = "/media/storage/data/voc2012"
-    check_dataset(VOC12Dataset(voc_root, "./data/train_aug.txt"), 10582)
-    check_dataset(VOC12Dataset(voc_root, "./data/val.txt"), 1449)
-
-    fusionseg_root = "/media/storage/data/segmentation"
-    check_dataset(FusionSegDataset(fusionseg_root, os.path.join(
-        fusionseg_root, "images.txt")), 84929)
-    check_dataset(FusionSegDataset(fusionseg_root, os.path.join(
-        fusionseg_root, "images.txt"), binary_class=False), 84929)
-
-    print('data is as expected for:\nvoc_root={}\nfusionseg_root={}'.format(
-        voc_root, fusionseg_root))

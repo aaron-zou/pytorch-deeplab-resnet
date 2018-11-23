@@ -13,8 +13,8 @@ from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
-from dataloaders import FusionSegDataloader, Mode, VOC12Dataloader
-from deeplab_resnet import MS_Deeplab, Res_Deeplab
+from deeplab.dataloaders import FusionSegDataloader, Mode, VOC12Dataloader
+from deeplab.deeplab_resnet import MS_Deeplab, Res_Deeplab
 
 DOCSTR = """Evaluate ResNet-DeepLab trained on scenes (VOC2012), a total of 21
 labels including background.

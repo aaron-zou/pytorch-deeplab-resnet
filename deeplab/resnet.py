@@ -3,10 +3,12 @@ Library with helpers for converting between ResNet-101 classification and
 segmentation networks (following DeepLab v2).
 """
 import os
+
 import torch
 import torch.nn as nn
-from deeplab_resnet import Classifier_Module, Res_Deeplab
 from torchvision import models
+
+from deeplab.deeplab_resnet import Classifier_Module, Res_Deeplab
 
 PRETRAINED_DEEPLAB_PATH = os.path.join(os.path.dirname(os.path.abspath(
     __file__)), 'data/MS_DeepLab_resnet_pretrained_COCO_init.pth')

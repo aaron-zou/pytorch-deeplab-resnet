@@ -71,9 +71,9 @@ def main():
     print(args)
 
     gpu = int(args['--gpu'])
-    max_label = int(args['--NoLabels']) - 1  # max_label = num_labels - 1
+    num_labels = int(args['--NoLabels'])
     model = get_model(int(args['--NoLabels']), args['--snapPath'], gpu)
-    hist = np.zeros((max_label + 1, max_label + 1))
+    hist = np.zeros((num_labels, num_labels))
 
     for i, (img, gt) in enumerate(get_dataloader(args)):
         print('processing {}'.format(i))
@@ -95,7 +95,7 @@ def main():
             plt.imshow(output)
             plt.show()
 
-        hist += fast_hist(gt.flatten(), output.flatten(), max_label + 1)
+        hist += fast_hist(gt.flatten(), output.flatten(), num_labels)
 
     miou = np.diag(hist) / (hist.sum(1) + hist.sum(0) - np.diag(hist))
     print('Mean iou={}'.format(np.sum(miou) / len(miou)))

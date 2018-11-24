@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.data
 from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable

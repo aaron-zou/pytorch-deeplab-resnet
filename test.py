@@ -20,7 +20,7 @@ DOCSTR = """Evaluate ResNet-DeepLab trained on scenes (VOC2012), a total of 21
 labels including background.
 
 Usage:
-    evalpyt.py (voc | fusionseg) [options]
+    test.py (voc | fusionseg) [options]
 
 Options:
     -h, --help                  Print this message

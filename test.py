@@ -13,8 +13,9 @@ from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
+import deeplab.resnet as resnet
 from deeplab.dataloaders import FusionSegDataloader, Mode, VOC12Dataloader
-from deeplab.deeplab_resnet import MS_Deeplab, Res_Deeplab
+from deeplab.deeplab_resnet import MS_Deeplab
 
 DOCSTR = """Evaluate ResNet-DeepLab trained on scenes (VOC2012), a total of 21
 labels including background.
@@ -27,14 +28,11 @@ Options:
     voc                         Test a model on VOC dataset.
     fusionseg                   Test a model on fusionseg dataset.
     --visualize                 Generate visualizations of model outputs.
-    --snapPath=<str>            Which snapshot to evaluate.
-                                [default: ./data/snapshots/VOC21_scenes_20000.pth]
+    --snapPath=<str>            Path to snapshot to evaluate.
     --valPath=<str>             Path to file list of validation images.
-                                [default: data/list/val.txt]
-    --root=<str>                Root path prefix [default: data/voc2012]
-    --NoLabels=<int>            The number of different labels in training data,
-                                VOC has 21 labels, including background
-                                [default: 21]
+    --root=<str>                Root path prefix.
+    --NoLabels=<int>            Number of different labels in training data,
+                                including background [default: 21]
     --gpu=<int>                GPU number [default: 0]
 
 """
@@ -47,10 +45,7 @@ def fast_hist(a: np.ndarray, b: np.ndarray, n: int) -> np.ndarray:
 
 def get_model(num_labels: int, snapshot_path: str, gpu: int) -> MS_Deeplab:
     """Retrieve model with appropriate parameters"""
-    model = Res_Deeplab(num_labels)
-    saved_state_dict = torch.load(snapshot_path)
-    model.load_state_dict(saved_state_dict)
-    return model.eval().cuda(gpu)
+    return resnet.getDeepLabV2(num_labels, snapshot_path).eval().cuda(gpu)
 
 
 def get_dataloader(args: Dict[str, str]) -> Any:
@@ -67,26 +62,27 @@ def get_dataloader(args: Dict[str, str]) -> Any:
 
 
 def main():
-    args = docopt(DOCSTR, version='v0.1')
+    args = docopt(DOCSTR)
     print(args)
 
     gpu = int(args['--gpu'])
     num_labels = int(args['--NoLabels'])
-    model = get_model(int(args['--NoLabels']), args['--snapPath'], gpu)
+    model = get_model(num_labels, args['--snapPath'], gpu)
     hist = np.zeros((num_labels, num_labels))
 
     for i, (img, gt) in enumerate(get_dataloader(args)):
         print('processing {}'.format(i))
+
+        # Rescale ground truth to [0, 255] for histogram calculation
+        gt = np.array(gt.squeeze() * 255, dtype="uint8")
+
         with torch.no_grad():
-            output = model(Variable(img.unsqueeze(0)).cuda(gpu))
+            output = model(Variable(img).cuda(gpu))
 
         # Resize to match ground truth size and take highest probability label
-        output = F.interpolate(output[-1], (513, 513)).cpu().data[0].numpy()
-        output = output[:, :gt.shape[0], :gt.shape[1]]
-        output = np.argmax(output, axis=0)
-
-        # Rescale to [0, 255] for histogram calculation
-        gt = np.array(gt.squeeze() * 255, dtype="uint8")
+        output = F.interpolate(output[3], (513, 513), mode='bilinear').cpu()
+        output = output.data[0].numpy()[:, :gt.shape[0], :gt.shape[1]]
+        output = np.argmax(output, axis=0).astype(np.uint8)
 
         if args['--visualize']:
             plt.subplot(2, 1, 1)

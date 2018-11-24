@@ -71,21 +71,22 @@ def main():
     print(args)
 
     gpu = int(args['--gpu'])
-    max_label = int(args['--NoLabels']) - 1  # labels from 0,1, ... 20 (for VOC)
-
+    max_label = int(args['--NoLabels']) - 1  # max_label = num_labels - 1
     model = get_model(int(args['--NoLabels']), args['--snapPath'], gpu)
+    hist = np.zeros((max_label + 1, max_label + 1))
 
-    hist = np.zeros((max_label+1, max_label+1))
     for i, (img, gt) in enumerate(get_dataloader(args)):
         print('processing {}'.format(i))
+        with torch.no_grad():
+            output = model(Variable(img.unsqueeze(0)).cuda(gpu))
 
-        output = model(Variable(img).cuda(gpu))
-
-        output = F.interpolate(output[3], (513, 513)).cpu().data[0].numpy()
+        # Resize to match ground truth size and take highest probability label
+        output = F.interpolate(output[-1], (513, 513)).cpu().data[0].numpy()
         output = output[:, :gt.shape[0], :gt.shape[1]]
+        output = np.argmax(output, axis=0)
 
-        output = output.transpose(1, 2, 0)
-        output = np.argmax(output, axis=2)
+        # Rescale to [0, 255] for histogram calculation
+        gt = np.array(gt.squeeze() * 255, dtype="uint8")
 
         if args['--visualize']:
             plt.subplot(2, 1, 1)
@@ -94,7 +95,7 @@ def main():
             plt.imshow(output)
             plt.show()
 
-        hist += fast_hist(gt.flatten(), output.flatten(), max_label+1)
+        hist += fast_hist(gt.flatten(), output.flatten(), max_label + 1)
 
     miou = np.diag(hist) / (hist.sum(1) + hist.sum(0) - np.diag(hist))
     print('Mean iou={}'.format(np.sum(miou) / len(miou)))

@@ -25,16 +25,20 @@ class PadToTransform:
     """
 
     def __init__(self, target_size: Tuple[int, int]) -> None:
-        self.target_size = target_size
+        self.target_height = target_size[0]
+        self.target_width = target_size[1]
 
     def __call__(self, img):
-        # NOTE: height and width are reversed between PIL.Image and size
-        if img.size[0] < self.target_size[1]:
+        # NOTE: height and width are reversed between PIL.Image and target size
+        im_width, im_height = img.size
+        if im_width < self.target_width:
             # Pad the right
-            return F.pad(img, (0, 0, self.target_size[1] - img.size[0], 0))
-        if img.size[1] < self.target_size[0]:
+            img = F.pad(img, (0, 0, self.target_width - im_width, 0))
+        if im_height < self.target_height:
             # Pad the bottom
-            return F.pad(img, (0, 0, 0, self.target_size[0] - img.size[1]))
+            img = F.pad(img, (0, 0, 0, self.target_height - im_height))
+
+        return img
 
 
 class TrainJointTransform:

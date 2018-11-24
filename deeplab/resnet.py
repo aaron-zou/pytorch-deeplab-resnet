@@ -11,7 +11,7 @@ from torchvision import models
 from deeplab.deeplab_resnet import Classifier_Module, Res_Deeplab
 
 PRETRAINED_DEEPLAB_PATH = os.path.join(os.path.dirname(os.path.abspath(
-    __file__)), 'data/MS_DeepLab_resnet_pretrained_COCO_init.pth')
+    __file__)), '../data/MS_DeepLab_resnet_pretrained_COCO_init.pth')
 
 
 def getResNet101(pretrained, num_categories=101):

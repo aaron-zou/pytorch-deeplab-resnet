@@ -1,11 +1,13 @@
 from __future__ import print_function
 
 import os
+import numpy as np
 from typing import Callable, Tuple
 
 import torch
 import torch.utils.data as data
 from PIL import Image
+import cv2
 
 
 class SegmentationDataset(data.Dataset):
@@ -38,10 +40,17 @@ class SegmentationDataset(data.Dataset):
 
     def __getitem__(self, idx: int) -> Tuple:
         filename = self.filenames[idx].rstrip()
-        img = Image.open(os.path.join(self.root, self.img_dir,
-                                      "{}{}".format(filename, self.img_ext)))
-        gt = Image.open(os.path.join(self.root, self.gt_dir,
-                                     "{}{}".format(filename, self.gt_ext)))
+
+        img_path = os.path.join(self.root, self.img_dir,
+                                "{}{}".format(filename, self.img_ext))
+        gt_path = os.path.join(self.root, self.gt_dir,
+                               "{}{}".format(filename, self.gt_ext))
+
+        # NOTE: Explicitly want to use BGR Pillow images to satisfy the
+        # requirements for torchvision transforms and model input
+        img = Image.fromarray(cv2.imread(img_path))
+        gt = Image.fromarray(cv2.imread(gt_path, 0))
+
         if self.joint_transform is not None:
             img, gt = self.joint_transform(img, gt)
         if self.img_transform is not None:
@@ -49,7 +58,7 @@ class SegmentationDataset(data.Dataset):
         if self.gt_transform is not None:
             gt = self.gt_transform(gt)
 
-        return (img, gt)
+        return img, gt
 
     def __len__(self) -> int:
         return len(self.filenames)

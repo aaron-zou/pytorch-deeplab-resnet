@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
-from typing import Dict
+from typing import Any, Dict
 
 import cv2
 import matplotlib.pyplot as plt
@@ -9,7 +9,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.data
 from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
@@ -54,7 +53,7 @@ def get_model(num_labels: int, snapshot_path: str, gpu: int) -> MS_Deeplab:
     return model.eval().cuda(gpu)
 
 
-def get_dataloader(args: Dict[str, str]) -> torch.utils.data.Dataloader:
+def get_dataloader(args: Dict[str, str]) -> Any:
     """Construct appropriate dataloader"""
     if args["voc"]:
         return VOC12Dataloader(args["--root"], args["--valPath"], Mode.VAL)

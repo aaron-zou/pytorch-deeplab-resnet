@@ -15,8 +15,8 @@ from deeplab.datasets import FusionSegDataset, VOC12Dataset
 
 @enum.unique
 class Mode(enum.Enum):
-    TRAIN = enum.auto()
-    VAL = enum.auto()
+    TRAIN = 0
+    VAL = 1
 
 
 class PadToTransform:

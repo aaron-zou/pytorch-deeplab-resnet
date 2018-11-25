@@ -255,7 +255,7 @@ def main():
         loss = loss / iter_size
         loss.backward()
 
-        if iteration % 100 == 0:
+        if iteration % 1 == 0:
             print('iter = {} of {} completed, loss = {}'.format(
                 iteration, max_iter, iter_size * (loss.data.cpu().numpy())))
 
@@ -271,7 +271,7 @@ def main():
                 weight_decay=weight_decay)
             optimizer.zero_grad()
 
-        if iteration % 5000 == 0 and iteration != 0:
+        if iteration % 20000 == 0 and iteration != 0:
             print('Taking snapshot {}'.format(iteration))
             torch.save(model.state_dict(), os.path.join(
                 'data/snapshots', '{}_{}.pth'.format(outputPrefix, iteration)))

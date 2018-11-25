@@ -28,13 +28,13 @@ Options:
     -h, --help                  Print this message
     voc                         Test a model on VOC dataset.
     fusionseg                   Test a model on fusionseg dataset.
-    --visualize                 Generate visualizations of model outputs.
     --snapPath=<str>            Path to snapshot to evaluate.
     --valPath=<str>             Path to file list of validation images.
     --root=<str>                Root path prefix.
     --NoLabels=<int>            Number of different labels in training data,
                                 including background [default: 21]
     --gpu=<int>                 GPU number [default: 0]
+    --visualize                 Generate visualizations of model outputs.
 
 """
 
@@ -93,7 +93,7 @@ def validate(model: MS_Deeplab, num_labels: int, gpu: int, args: Dict[str, str])
         hist += fast_hist(gt.flatten(), output.flatten(), num_labels)
 
     miou = np.diag(hist) / (hist.sum(1) + hist.sum(0) - np.diag(hist))
-    print('Mean iou={}'.format(np.sum(miou) / len(miou)))
+    print('Mean iou = {}'.format(np.sum(miou) / len(miou)))
 
 
 def main():

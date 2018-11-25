@@ -14,7 +14,7 @@ from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
-import deeplab.resnet
+import deeplab.resnet as resnet
 
 DOCSTR = """Train ResNet-DeepLab on VOC12 (scenes) in pytorch using MS-COCO
 pretrained initialization.
@@ -55,15 +55,8 @@ def outS(i):
     return j
 
 
-def read_file(path_to_file):
-    with open(path_to_file) as f:
-        img_list = []
-        for line in f:
-            img_list.append(line[:-1])
-    return img_list
-
-
 def chunker(seq, size):
+    """Theoretically used to support larger batch sizes"""
     return (seq[pos:pos+size] for pos in range(0, len(seq), size))
 
 
@@ -93,7 +86,7 @@ def scale_gt(img_temp, scale):
     return cv2.resize(img_temp, new_dims, interpolation=cv2.INTER_NEAREST).astype(float)
 
 
-def get_data_from_chunk_v2(chunk, gt_path, img_path, gt_ext, img_ext):
+def get_data_from_chunk(chunk, gt_path, img_path, gt_ext, img_ext, num_labels):
     # random.uniform(0.5,1.5) does not fit in a Titan X with the present
     # version of pytorch, so we random scaling in the range (0.5,1.3),
     # different than caffe implementation in that caffe used only 4 fixed
@@ -104,6 +97,8 @@ def get_data_from_chunk_v2(chunk, gt_path, img_path, gt_ext, img_ext):
     gt = np.zeros((dim, dim, 1, len(chunk)))
     for i, piece in enumerate(chunk):
         flip_p = random.uniform(0, 1)
+
+        # Preprocess img
         img_temp = cv2.imread(os.path.join(
             img_path, piece + img_ext)).astype(float)
         img_temp = cv2.resize(img_temp, (321, 321)).astype(float)
@@ -114,13 +109,19 @@ def get_data_from_chunk_v2(chunk, gt_path, img_path, gt_ext, img_ext):
         img_temp = flip(img_temp, flip_p)
         images[:, :, :, i] = img_temp
 
+        # Preprocess ground truth
         gt_temp = cv2.imread(os.path.join(gt_path, piece + gt_ext))[:, :, 0]
-        gt_temp[gt_temp == 255] = 0
+        # Hack to handle the ignore label for binary vs. multiclass cases
+        if num_labels == 2:
+            gt_temp[gt_temp == 255] = 1
+        else:
+            gt_temp[gt_temp == 255] = 0
         gt_temp = cv2.resize(gt_temp, (321, 321),
                              interpolation=cv2.INTER_NEAREST)
         gt_temp = scale_gt(gt_temp, scale)
         gt_temp = flip(gt_temp, flip_p)
         gt[:, :, 0, i] = gt_temp
+
         a = outS(321*scale)  # 41
         b = outS((321*0.5)*scale+1)  # 21
     labels = [resize_label_batch(gt, i) for i in [a, a, b, a]]
@@ -131,7 +132,7 @@ def get_data_from_chunk_v2(chunk, gt_path, img_path, gt_ext, img_ext):
 
 def loss_calc(out, label, gpu0):
     """
-    This function returns cross entropy loss for semantic segmentation
+    This function returns cross entropy loss for semantic segmentation.
     """
     # out shape batch_size x channels x h x w -> batch_size x channels x h x w
     # label shape h x w x 1 x batch_size  -> batch_size x 1 x h x w
@@ -152,8 +153,8 @@ def get_1x_lr_params_NOscale(model):
     """
     This generator returns all the parameters of the net except for
     the last classification layer. Note that for each batchnorm layer,
-    requires_grad is set to False in deeplab_resnet.py, therefore this function does not return
-    any batchnorm parameter
+    requires_grad is set to False in deeplab_resnet.py, therefore this
+    function does not return any batchnorm parameters.
     """
     b = []
 
@@ -196,7 +197,7 @@ def get_model(num_labels, use_imagenet, gpu0):
 
 
 def main():
-    args = docopt(DOCSTR, version='v0.1')
+    args = docopt(DOCSTR)
     print(args)
 
     gt_path = args['--GTpath']
@@ -204,12 +205,13 @@ def main():
     gt_ext = args['--GText']
     img_ext = args['--IMext']
     gpu0 = int(args['--gpu0'])
+    num_labels = int(args['--NoLabels'])
     outputPrefix = args['--outputPrefix']
 
     if not os.path.exists('data/snapshots'):
         os.makedirs('data/snapshots')
 
-    model = get_model(int(args['--NoLabels']), args['--imagenet'], gpu0)
+    model = get_model(num_labels, args['--imagenet'], gpu0)
 
     # Read training parameters
     max_iter = int(args['--maxIter'])
@@ -218,12 +220,16 @@ def main():
     base_lr = float(args['--lr'])
 
     # Construct file path lists
-    img_list = read_file(args['--LISTpath'])
+    with open(args['--LISTpath'], 'r') as f:
+        img_list = [line.rstrip() for line in f.readlines()]
+
+    # Extend image list to cover the max number of iterations
     data_list = []
     while len(data_list) < max_iter:
         np.random.shuffle(img_list)
         data_list.extend(img_list)
 
+    # Set up optimizer
     optimizer = optim.SGD([
         {'params': get_1x_lr_params_NOscale(model), 'lr': base_lr},
         {'params': get_10x_lr_params(model), 'lr': 10*base_lr}],
@@ -234,11 +240,11 @@ def main():
     optimizer.zero_grad()
     data_gen = chunker(data_list, batch_size)
 
-    for iteration in range(max_iter+1):
+    for iteration in range(max_iter + 1):
         chunk = next(data_gen)
 
-        images, label = get_data_from_chunk_v2(
-            chunk, gt_path, img_path, gt_ext, img_ext)
+        images, label = get_data_from_chunk(
+            chunk, gt_path, img_path, gt_ext, img_ext, num_labels)
         images = Variable(images).cuda(gpu0)
 
         out = model(images)
@@ -249,7 +255,7 @@ def main():
         loss = loss / iter_size
         loss.backward()
 
-        if iteration % 1 == 0:
+        if iteration % 100 == 0:
             print('iter = {} of {} completed, loss = {}'.format(
                 iteration, max_iter, iter_size * (loss.data.cpu().numpy())))
 

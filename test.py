@@ -99,7 +99,7 @@ def main():
     print(args)
 
     # Create model
-    num_labels = int(args['--NoLabels'])
+    num_labels = int(args['--numLabels'])
     gpu = int(args['--gpu'])
     model = get_model(num_labels, args['--snapPath'], gpu)
 

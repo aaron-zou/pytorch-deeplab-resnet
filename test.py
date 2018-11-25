@@ -6,33 +6,36 @@ from typing import Any, Dict
 
 import cv2
 import matplotlib.pyplot as plt
+import multiprocessing
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
 import deeplab.resnet as resnet
-from deeplab.dataloaders import FusionSegDataloader, Mode, VOC12Dataloader
+import deeplab.datasets as datasets
 from deeplab.deeplab_resnet import MS_Deeplab, Res_Deeplab
 
 DOCSTR = """Evaluate ResNet-DeepLab trained on scenes (VOC2012), a total of 21
 labels including background.
 
 Usage:
-    test.py (voc | fusionseg) [options]
+    test.py [options]
 
 Options:
     -h, --help                  Print this message
-    voc                         Test a model on VOC dataset.
-    fusionseg                   Test a model on fusionseg dataset.
     --snapPath=<str>            Path to snapshot to evaluate.
     --valPath=<str>             Path to file list of validation images.
-    --root=<str>                Root path prefix.
-    --NoLabels=<int>            Number of different labels in training data,
-                                including background [default: 21]
+    --imgPath=<str>             Path to image directory.
+    --gtPath=<str>              Page to ground truth directory.
+    --imgExt=<str>              File extension for images.
+    --gtExt=<str>               File extension for ground truth
+    --numLabels=<int>           Number of different labels in training data,
+                                including background
     --gpu=<int>                 GPU number [default: 0]
     --visualize                 Generate visualizations of model outputs.
 
@@ -52,22 +55,17 @@ def get_model(num_labels: int, snapshot_path: str, gpu: int) -> MS_Deeplab:
     return resnet.getDeepLabV2(num_labels, snapshot_path).eval().cuda(gpu)
 
 
-def get_dataloader(args: Dict[str, str]) -> Any:
+def make_dataloader(args: Dict[str, str]) -> Any:
     """Construct appropriate dataloader"""
-    if args["voc"]:
-        return VOC12Dataloader(args["--root"], args["--valPath"], Mode.VAL)
-    elif args["fusionseg"]:
-        return FusionSegDataloader(args["--root"],
-                                   args["--valPath"],
-                                   binary_class=args["--NoLabels"] == 2,
-                                   mode=Mode.VAL)
-    else:
-        raise NotImplementedError
+    dataset = datasets.SegmentationDataset(
+        datasets.Mode.VAL, args["--valPath"], args["--imgPath"],
+        args["--gtPath"], args["--imgExt"], args["--gtExt"])
+    return DataLoader(dataset, num_workers=multiprocessing.cpu_count() - 1)
 
 
 def validate(model: MS_Deeplab, num_labels: int, gpu: int, args: Dict[str, str]) -> None:
     hist = np.zeros((num_labels, num_labels))
-    for i, (img, gt) in enumerate(get_dataloader(args)):
+    for i, (img, gt) in enumerate(make_dataloader(args)):
         print('processing {}'.format(i))
 
         # Rescale ground truth to [0, 255] for histogram calculation

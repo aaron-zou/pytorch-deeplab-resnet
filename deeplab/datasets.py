@@ -20,6 +20,16 @@ class Mode(enum.Enum):
     VAL = 1
 
 
+def output_size(i):
+    """Given shape of input image as i,i,3 in deeplab-resnet model, this function
+    returns j such that the shape of output blob of is j,j,21 (21 in case of VOC)"""
+    j = int(i)
+    j = (j+1) // 2
+    j = int(np.ceil((j+1) / 2.0))
+    j = (j+1) // 2
+    return j
+
+
 class PadToTransform:
     """
     Zero-pads an image to be at minimum the passed-in size.
@@ -52,16 +62,24 @@ class TrainJointTransform:
                  flip_prob: float = 0.5) -> None:
         self.size = size
         self.flip_prob = flip_prob
-        self.pad = PadToTransform(size)
 
     def __call__(self, img, gt):
-        # Pad if necessary
-        img = self.pad(img)
-        gt = self.pad(gt)
+        # Differing behavior for binary vs. multiclass case
+        gt_raw = np.array(gt)
+        if np.all(np.unique(gt_raw) == [0, 255]):
+            gt_raw[gt_raw == 255] = 1
+        else:
+            gt_raw[gt_raw == 255] = 0
+        gt = Image.fromarray(gt_raw)
 
-        # Random crop
+        # Padding and random cropping
+        scale = random.uniform(0.5, 1.1)
+        scaled_size = (int(scale * self.size[0]), int(scale * self.size[1]))
+        pad = PadToTransform(scaled_size)
+        img = pad(img)
+        gt = pad(gt)
         i, j, h, w = transforms.RandomCrop.get_params(
-            img, output_size=self.size)
+            img, output_size=scaled_size)
         img = F.crop(img, i, j, h, w)
         gt = F.crop(gt, i, j, h, w)
 
@@ -73,23 +91,44 @@ class TrainJointTransform:
         return img, gt
 
 
+class ResizeLabelBatch:
+    """
+    Mirror the forward pass with labels for each separate interpolated output.
+    """
+
+    def __init__(self):
+        pass
+
+    def resize_batch(self, label, size):
+        """Resize and convert to tensor"""
+        resized = F.resize(label, size, interpolation=Image.NEAREST)
+        return F.to_tensor(resized) * 255
+
+    def __call__(self, gt):
+        a = output_size(gt.size[0])
+        b = output_size((gt.size[0] / 2) + 1)
+        return [self.resize_batch(gt, size) for size in [a, a, b, a]]
+
+
 TRANSFORMS = {
     Mode.TRAIN: {
         "joint_transform": TrainJointTransform(),
         "img_transform": transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.481078, 0.407875, 0.457525], std=[1, 1, 1])
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+
         ]),
-        "gt_transform": transforms.ToTensor()
+        "gt_transform": ResizeLabelBatch()
     },
     Mode.VAL: {
         "joint_transform": None,
         "img_transform": transforms.Compose([
             PadToTransform((513, 513)),
             transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.481078, 0.407875, 0.457525], std=[1, 1, 1])
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+
         ]),
         "gt_transform": transforms.ToTensor()
     }
@@ -128,10 +167,9 @@ class SegmentationDataset(data.Dataset):
         gt_path = os.path.join(
             self.gt_path, "{}{}".format(filename, self.gt_ext))
 
-        # NOTE: Explicitly want to use BGR Pillow images to satisfy the
-        # requirements for torchvision transforms and model input
-        img = Image.fromarray(cv2.imread(img_path))
-        gt = Image.fromarray(cv2.imread(gt_path, 0))
+        # NOTE: using Pillow RGB images
+        img = Image.open(img_path)
+        gt = Image.open(gt_path)
 
         if self.joint_transform is not None:
             img, gt = self.joint_transform(img, gt)

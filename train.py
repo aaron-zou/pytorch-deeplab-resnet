@@ -7,14 +7,17 @@ import random
 import cv2
 import numpy as np
 import torch
+import multiprocessing
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.data import DataLoader, RandomSampler
 from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
 
 import deeplab.resnet as resnet
+from deeplab.datasets import Mode, SegmentationDataset
 
 DOCSTR = """Train ResNet-DeepLab on VOC12 (scenes) in pytorch using MS-COCO
 pretrained initialization.
@@ -32,249 +35,114 @@ Options:
                                 VOC has 21 labels, including background
                                 [default: 21]
     --LISTpath=<str>            Input image number list file
-                                [default: data/list/train_aug.txt]
+                                [default: data/train_aug.txt]
     --lr=<float>                Learning Rate [default: 0.00025]
     -i, --iterSize=<int>        Num iters to accumulate gradients over
                                 [default: 10]
     --wtDecay=<float>           Weight decay during training [default: 0.0005]
-    --gpu0=<int>                GPU number [default: 0]
+    --gpu=<int>                 GPU number [default: 0]
     --maxIter=<int>             Maximum number of iterations [default: 20000]
-    --imagenet                  Use ImageNet initialization (otherwise MS-COCO)
     --outputPrefix=<str>        Prefix for snapshot output file
                                 [default: VOC12_scenes]
+    --imagenet                  Set to use ImageNet pretraining, otherwise
+                                default to MS-COCO.
 """
 
 
-def outS(i):
-    """Given shape of input image as i,i,3 in deeplab-resnet model, this function
-    returns j such that the shape of output blob of is j,j,21 (21 in case of VOC)"""
-    j = int(i)
-    j = (j+1) // 2
-    j = int(np.ceil((j+1) / 2.0))
-    j = (j+1) // 2
-    return j
-
-
-def chunker(seq, size):
-    """Theoretically used to support larger batch sizes"""
-    return (seq[pos:pos+size] for pos in range(0, len(seq), size))
-
-
-def resize_label_batch(label, size):
-    label_resized = np.zeros((size, size, 1, label.shape[3]))
-    interp = nn.UpsamplingNearest2d(size=(size, size))
-    labelVar = Variable(torch.from_numpy(label.transpose(3, 2, 0, 1)))
-    label_resized[:, :, :, :] = interp(
-        labelVar).data.numpy().transpose(2, 3, 1, 0)
-    return label_resized
-
-
-def flip(I, flip_p):
-    if flip_p > 0.5:
-        return np.fliplr(I)
-    else:
-        return I
-
-
-def scale_im(img_temp, scale):
-    new_dims = (int(img_temp.shape[0]*scale), int(img_temp.shape[1]*scale))
-    return cv2.resize(img_temp, new_dims).astype(float)
-
-
-def scale_gt(img_temp, scale):
-    new_dims = (int(img_temp.shape[0]*scale), int(img_temp.shape[1]*scale))
-    return cv2.resize(img_temp, new_dims, interpolation=cv2.INTER_NEAREST).astype(float)
-
-
-def get_data_from_chunk(chunk, gt_path, img_path, gt_ext, img_ext, num_labels):
-    # random.uniform(0.5,1.5) does not fit in a Titan X with the present
-    # version of pytorch, so we random scaling in the range (0.5,1.3),
-    # different than caffe implementation in that caffe used only 4 fixed
-    # scales. Refer to README
-    scale = random.uniform(0.5, 1.1)
-    dim = int(scale * 321)
-    images = np.zeros((dim, dim, 3, len(chunk)))
-    gt = np.zeros((dim, dim, 1, len(chunk)))
-    for i, piece in enumerate(chunk):
-        flip_p = random.uniform(0, 1)
-
-        # Preprocess img
-        img_temp = cv2.imread(os.path.join(
-            img_path, piece + img_ext)).astype(float)
-        img_temp = cv2.resize(img_temp, (321, 321)).astype(float)
-        img_temp = scale_im(img_temp, scale)
-        img_temp[:, :, 0] = img_temp[:, :, 0] - 104.008
-        img_temp[:, :, 1] = img_temp[:, :, 1] - 116.669
-        img_temp[:, :, 2] = img_temp[:, :, 2] - 122.675
-        img_temp = flip(img_temp, flip_p)
-        images[:, :, :, i] = img_temp
-
-        # Preprocess ground truth
-        gt_temp = cv2.imread(os.path.join(gt_path, piece + gt_ext))[:, :, 0]
-        # Hack to handle the ignore label for binary vs. multiclass cases
-        if num_labels == 2:
-            gt_temp[gt_temp == 255] = 1
-        else:
-            gt_temp[gt_temp == 255] = 0
-        gt_temp = cv2.resize(gt_temp, (321, 321),
-                             interpolation=cv2.INTER_NEAREST)
-        gt_temp = scale_gt(gt_temp, scale)
-        gt_temp = flip(gt_temp, flip_p)
-        gt[:, :, 0, i] = gt_temp
-
-        a = outS(321*scale)  # 41
-        b = outS((321*0.5)*scale+1)  # 21
-    labels = [resize_label_batch(gt, i) for i in [a, a, b, a]]
-    images = images.transpose((3, 2, 0, 1))
-    images = torch.from_numpy(images).float()
-    return images, labels
-
-
-def loss_calc(out, label, gpu0):
+def calc_loss(output, labels, gpu):
     """
-    This function returns cross entropy loss for semantic segmentation.
+    Calculate cross-entropy loss for model output and label.
     """
-    # out shape batch_size x channels x h x w -> batch_size x channels x h x w
-    # label shape h x w x 1 x batch_size  -> batch_size x 1 x h x w
-    label = label[:, :, 0, :].transpose(2, 0, 1)
-    label = torch.from_numpy(label).long()
-    label = Variable(label).cuda(gpu0)
-    m = nn.LogSoftmax()
-    criterion = nn.NLLLoss()
-    out = m(out)
-    return criterion(out, label)
+    loss = 0
+    criterion = nn.CrossEntropyLoss().cuda()
+    for i in range(len(output)):
+        label = labels[i].squeeze(0)
+        label = Variable(label.long()).cuda(gpu)
+        loss += criterion(output[i], label)
+    return loss
 
 
 def lr_poly(base_lr, iter, max_iter, power):
     return base_lr*((1 - float(iter) / max_iter)**(power))
 
 
-def get_1x_lr_params_NOscale(model):
-    """
-    This generator returns all the parameters of the net except for
-    the last classification layer. Note that for each batchnorm layer,
-    requires_grad is set to False in deeplab_resnet.py, therefore this
-    function does not return any batchnorm parameters.
-    """
-    b = []
-
-    b.append(model.Scale.conv1)
-    b.append(model.Scale.bn1)
-    b.append(model.Scale.layer1)
-    b.append(model.Scale.layer2)
-    b.append(model.Scale.layer3)
-    b.append(model.Scale.layer4)
-
-    for i in range(len(b)):
-        for j in b[i].modules():
-            jj = 0
-            for k in j.parameters():
-                jj += 1
-                if k.requires_grad:
-                    yield k
+def get_model(num_labels, gpu):
+    # Always use ImageNet-trained model
+    model = resnet.getDeepLabV2FromResNet(num_labels)
+    return model.float().eval().cuda(gpu)
 
 
-def get_10x_lr_params(model):
-    """
-    This generator returns all the parameters for the last layer of the net,
-    which does the classification of pixel into classes
-    """
-
-    b = []
-    b.append(model.Scale.layer5.parameters())
-
-    for j in range(len(b)):
-        for i in b[j]:
-            yield i
-
-
-def get_model(num_labels, use_imagenet, gpu0):
-    if use_imagenet:
-        model = resnet.getDeepLabV2FromResNet(num_labels)
-    else:
-        model = resnet.getDeepLabV2(num_labels)
-    return model.float().eval().cuda(gpu0)
+def make_optimizer(model, lr, weight_decay):
+    # This has the parameters for the network besides the last classification
+    # layer and any batchnorm layers (requires_grad set to False in model)
+    requires_grad_params = (p[1] for p in model.Scale.named_parameters()
+                            if "layer5" not in p[0] and p[1].requires_grad)
+    classification_params = model.Scale.layer5.parameters()
+    return optim.SGD([
+        {'params': requires_grad_params, 'lr': lr},
+        {'params': classification_params, 'lr': 10*lr}],
+        lr=lr,
+        momentum=0.9,
+        weight_decay=weight_decay)
 
 
 def main():
     args = docopt(DOCSTR)
     print(args)
 
-    gt_path = args['--GTpath']
-    img_path = args['--IMpath']
-    gt_ext = args['--GText']
-    img_ext = args['--IMext']
-    gpu0 = int(args['--gpu0'])
-    num_labels = int(args['--NoLabels'])
+    gpu = int(args['--gpu'])
     outputPrefix = args['--outputPrefix']
 
-    if not os.path.exists('data/snapshots'):
-        os.makedirs('data/snapshots')
+    if not os.path.exists('snapshots'):
+        os.makedirs('snapshots')
 
-    model = get_model(num_labels, args['--imagenet'], gpu0)
+    # Set up data-related operations
+    dataset = SegmentationDataset(Mode.TRAIN, args['--LISTpath'],
+                                  args["--IMpath"], args["--GTpath"],
+                                  args["--IMext"], args["--GText"])
+    dataloader = DataLoader(dataset, shuffle=True,
+                            num_workers=multiprocessing.cpu_count())
 
-    # Read training parameters
+    # Retrieve model
+    model = get_model(int(args['--NoLabels']), gpu)
+
+    # Training parameters
     max_iter = int(args['--maxIter'])
-    batch_size = 1
     weight_decay = float(args['--wtDecay'])
     base_lr = float(args['--lr'])
-
-    # Construct file path lists
-    with open(args['--LISTpath'], 'r') as f:
-        img_list = [line.rstrip() for line in f.readlines()]
-
-    # Extend image list to cover the max number of iterations
-    data_list = []
-    while len(data_list) < max_iter:
-        np.random.shuffle(img_list)
-        data_list.extend(img_list)
+    iter_size = int(args['--iterSize'])
 
     # Set up optimizer
-    optimizer = optim.SGD([
-        {'params': get_1x_lr_params_NOscale(model), 'lr': base_lr},
-        {'params': get_10x_lr_params(model), 'lr': 10*base_lr}],
-        lr=base_lr,
-        momentum=0.9,
-        weight_decay=weight_decay)
-
+    optimizer = make_optimizer(model, base_lr, weight_decay)
     optimizer.zero_grad()
-    data_gen = chunker(data_list, batch_size)
 
-    for iteration in range(max_iter + 1):
-        chunk = next(data_gen)
+    iteration = 0
+    while iteration <= max_iter:
+        for image, label in dataloader:
+            output = model(Variable(image).cuda(gpu))
+            loss = calc_loss(output, label, gpu) / iter_size
+            loss.backward()
 
-        images, label = get_data_from_chunk(
-            chunk, gt_path, img_path, gt_ext, img_ext, num_labels)
-        images = Variable(images).cuda(gpu0)
+            if iteration % 1 == 0:
+                print('{}/{} done, loss = {}'.format(
+                    iteration, max_iter, iter_size * (loss.data.cpu().numpy())))
 
-        out = model(images)
-        loss = loss_calc(out[0], label[0], gpu0)
-        iter_size = int(args['--iterSize'])
-        for i in range(len(out)-1):
-            loss = loss + loss_calc(out[i+1], label[i+1], gpu0)
-        loss = loss / iter_size
-        loss.backward()
+            if iteration % iter_size == 0:
+                optimizer.step()
+                lr = lr_poly(base_lr, iteration, max_iter, 0.9)
+                print('(poly lr) learning rate = {}'.format(lr))
+                optimizer = make_optimizer(model, lr, weight_decay)
+                optimizer.zero_grad()
 
-        if iteration % 1 == 0:
-            print('iter = {} of {} completed, loss = {}'.format(
-                iteration, max_iter, iter_size * (loss.data.cpu().numpy())))
+            if iteration % 5000 == 0 and iteration != 0:
+                print('saving snapshot {}'.format(iteration))
+                torch.save(model.state_dict(), os.path.join(
+                    'snapshots', '{}_{}.pth'.format(outputPrefix, iteration)))
 
-        if iteration % iter_size == 0:
-            optimizer.step()
-            lr_ = lr_poly(base_lr, iteration, max_iter, 0.9)
-            print('(poly lr policy) learning rate: {}'.format(lr_))
-            optimizer = optim.SGD([
-                {'params': get_1x_lr_params_NOscale(model), 'lr': lr_},
-                {'params': get_10x_lr_params(model), 'lr': 10*lr_}],
-                lr=lr_,
-                momentum=0.9,
-                weight_decay=weight_decay)
-            optimizer.zero_grad()
+            iteration += 1
 
-        if iteration % 20000 == 0 and iteration != 0:
-            print('Taking snapshot {}'.format(iteration))
-            torch.save(model.state_dict(), os.path.join(
-                'data/snapshots', '{}_{}.pth'.format(outputPrefix, iteration)))
+            if iteration > max_iter:
+                break
 
 
 if __name__ == "__main__":

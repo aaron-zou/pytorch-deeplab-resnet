@@ -4,8 +4,8 @@ data/gt
 data/img
 data/snapshots
 experiments
-sync_to_eldar.sh
 test_sanity_check.py
+snapshots
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

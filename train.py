@@ -1,20 +1,20 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
+import multiprocessing
 import os
 import random
 
 import cv2
 import numpy as np
 import torch
-import multiprocessing
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader, RandomSampler
 from docopt import docopt
 from PIL import Image
 from torch.autograd import Variable
+from torch.utils.data import DataLoader, RandomSampler
 
 import deeplab.resnet as resnet
 from deeplab.datasets import Mode, SegmentationDataset
@@ -66,9 +66,11 @@ def lr_poly(base_lr, iter, max_iter, power):
     return base_lr*((1 - float(iter) / max_iter)**(power))
 
 
-def get_model(num_labels, gpu):
-    # Always use ImageNet-trained model
-    model = resnet.getDeepLabV2FromResNet(num_labels)
+def get_model(num_labels, gpu, imagenet):
+    if imagenet:
+        model = resnet.getDeepLabV2FromResNet(num_labels)
+    else:
+        model = resnet.getDeepLabV2(num_labels)
     return model.float().eval().cuda(gpu)
 
 
@@ -104,7 +106,7 @@ def main():
                             num_workers=multiprocessing.cpu_count())
 
     # Retrieve model
-    model = get_model(int(args['--NoLabels']), gpu)
+    model = get_model(int(args['--NoLabels']), gpu, args["--imagenet"])
 
     # Training parameters
     max_iter = int(args['--maxIter'])
@@ -134,7 +136,7 @@ def main():
                 optimizer = make_optimizer(model, lr, weight_decay)
                 optimizer.zero_grad()
 
-            if iteration % 5000 == 0 and iteration != 0:
+            if iteration % 10000 == 0 and iteration != 0:
                 print('saving snapshot {}'.format(iteration))
                 torch.save(model.state_dict(), os.path.join(
                     'snapshots', '{}_{}.pth'.format(outputPrefix, iteration)))
